@@ -32,6 +32,9 @@ class MultiLoader(sgtk.platform.Application):
             return
 
         tk_multi_loader = self.import_module("tk_multi_loader")
+
+        # make the util methods available via the app instance
+        self._utils = tk_multi_loader.utils
         
         # register command
         cb = lambda : tk_multi_loader.show_dialog(self)
@@ -58,6 +61,26 @@ class MultiLoader(sgtk.platform.Application):
         Specifies that context changes are allowed.
         """
         return True
+
+    @property
+    def utils(self):
+        """
+        Exposes the loader2 ``utils`` module.
+
+        This module provides methods that are useful to its hooks.
+        Example code running in a hook:
+
+        .. code-block:: python
+
+            # get a handle on the loader2 app
+            app = self.parent
+
+            # call a util method
+            path_components = app.utils.find_sequence_range(app.sgtk, path)
+
+        :return: A handle on the app's ``utils`` module.
+        """
+        return self._utils
 
     def open_publish(self, title="Open Publish", action="Open", publish_types = []):
         """

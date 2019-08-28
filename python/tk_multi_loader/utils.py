@@ -8,8 +8,14 @@
 # agreement to the Shotgun Pipeline Toolkit Source Code License. All rights
 # not expressly granted therein are reserved by Shotgun Software Inc.
 
+
+import glob
+import os
+import re
+
 import sgtk
 from sgtk.platform.qt import QtCore, QtGui
+from sgtk import TankError
 
 
 class ResizeEventFilter(QtCore.QObject):
@@ -319,3 +325,103 @@ def resolve_filters(filters):
                 resolved_filter.append(field)
         resolved_filters.append(resolved_filter)
     return resolved_filters
+
+
+def sequence_range_from_path(path):
+    """
+    Parses the file name in an attempt to determine the first and last
+    frame number of a sequence. This assumes some sort of common convention
+    for the file names, where the frame number is an integer at the end of
+    the basename, just ahead of the file extension, such as
+    file.0001.jpg, or file_001.jpg. We also check for input file names with
+    abstracted frame number tokens, such as file.####.jpg, or file.%04d.jpg.
+
+    :param str path: The file path to parse.
+
+    :returns: None if no range could be determined, otherwise (min, max)
+    :rtype: tuple or None
+    """
+    # This pattern will match the following at the end of a string and
+    # retain the frame number or frame token as group(1) in the resulting
+    # match object:
+    #
+    # 0001
+    # ####
+    # %04d
+    #
+    # The number of digits or hashes does not matter; we match as many as
+    # exist.
+    frame_pattern = re.compile(r"([0-9#]+|[%]0\dd)$")
+    root, ext = os.path.splitext(path)
+    match = re.search(frame_pattern, root)
+
+    # If we did not match, we don't know how to parse the file name, or there
+    # is no frame number to extract.
+    if not match:
+        return None
+
+    # We need to get all files that match the pattern from disk so that we
+    # can determine what the min and max frame number is.
+    glob_path = "%s%s" % (
+        re.sub(frame_pattern, "*", root),
+        ext,
+    )
+    files = glob.glob(glob_path)
+
+    # Our pattern from above matches against the file root, so we need
+    # to chop off the extension at the end.
+    file_roots = [os.path.splitext(f)[0] for f in files]
+
+    # We know that the search will result in a match at this point, otherwise
+    # the glob wouldn't have found the file. We can search and pull group 1
+    # to get the integer frame number from the file root name.
+    frames = [int(re.search(frame_pattern, f).group(1)) for f in file_roots]
+    return min(frames), max(frames)
+
+
+def find_sequence_range(tk, path):
+    """
+    Helper method attempting to extract sequence information.
+
+    Using the toolkit template system, the path will be probed to
+    check if it is a sequence, and if so, frame information is
+    attempted to be extracted.
+
+    :param path: Path to file on disk.
+    :returns: None if no range could be determined, otherwise (min, max)
+    """
+    # find a template that matches the path:
+    template = None
+    try:
+        template = tk.template_from_path(path)
+    except TankError:
+        pass
+
+    if not template:
+        # If we don't have a template to take advantage of, then
+        # we are forced to do some rough parsing ourself to try
+        # to determine the frame range.
+        return sequence_range_from_path(path)
+
+    # get the fields and find all matching files:
+    fields = template.get_fields(path)
+    if "SEQ" not in fields:
+        # Ticket #655: older paths match wrong templates,
+        # so fall back on path parsing
+        return sequence_range_from_path(path)
+
+    files = tk.paths_from_template(template, fields, ["SEQ", "eye"])
+
+    # find frame numbers from these files:
+    frames = []
+    for file in files:
+        fields = template.get_fields(file)
+        frame = fields.get("SEQ")
+        if frame != None:
+            frames.append(frame)
+    if not frames:
+        return None
+
+    # return the range
+    return min(frames), max(frames)
+
